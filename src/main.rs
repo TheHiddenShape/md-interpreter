@@ -17,7 +17,8 @@ use std::{env, fs, thread};
 
 use markdown::{escape, render};
 
-const SITE_TITLE: &str = "My notes";
+const SITE_TITLE: &str = "Cogito, ergo scribo";
+const INDEX_INTRO: &str = "A thought is only half-formed until it meets the page; writing is how it learns what it meant.";
 const DEFAULT_NOTES: &str = "notes";
 const NOTES_ENV: &str = "IMDSRC";
 const DIST: &str = "dist";
@@ -82,8 +83,22 @@ fn page(title: &str, body: &str, root: &str) -> String {
 </html>
 "#,
         title = escape(title),
-        site = escape(SITE_TITLE),
+        site = escape(&hostname()),
     )
+}
+
+/// Name of the machine building the site, shown in the page header.
+fn hostname() -> String {
+    let clean = |s: String| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+    fs::read_to_string("/etc/hostname")
+        .ok()
+        .and_then(clean)
+        .or_else(|| env::var("HOSTNAME").ok().and_then(clean))
+        .or_else(|| {
+            let out = std::process::Command::new("hostname").output().ok()?;
+            clean(String::from_utf8_lossy(&out.stdout).into_owned())
+        })
+        .unwrap_or_else(|| "localhost".to_string())
 }
 
 /// Links between notes (`[see](other.md)`) point to the generated page.
@@ -215,7 +230,11 @@ fn build() -> io::Result<usize> {
             .collect();
         format!("<ul class=\"notes\">\n{}\n</ul>", items.join("\n"))
     };
-    let body = format!("<h1>{}</h1>\n{list}", escape(SITE_TITLE));
+    let body = format!(
+        "<h1>{}</h1>\n<p>{}</p>\n{list}",
+        escape(SITE_TITLE),
+        escape(INDEX_INTRO)
+    );
     fs::write(dist.join("index.html"), page(SITE_TITLE, &body, ""))?;
     Ok(notes.len())
 }
