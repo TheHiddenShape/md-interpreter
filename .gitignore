@@ -1,0 +1,17 @@
+# Rust / Cargo build output
+/target/
+**/*.rs.bk
+*.pdb
+
+# Generated site (separate git repo: sekhmet-docs)
+/dist/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Local env
+.env

@@ -1,0 +1,83 @@
+/* Strictly two colours: black on white, or white on black in dark mode. */
+:root {
+  --bg: #fff;
+  --text: #000;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000;
+    --text: #fff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 16px 80px;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.65 Georgia, "Iowan Old Style", "Times New Roman", serif;
+}
+
+header, main { max-width: 1000px; margin: 0 auto; }
+
+header {
+  padding: 28px 0;
+  font: 600 14px/1 system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+header a { text-decoration: none; }
+header a:hover { text-decoration: underline; }
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: system-ui, sans-serif;
+  line-height: 1.25;
+  margin: 2em 0 0.6em;
+}
+h1 { font-size: 2em; margin-top: 0.5em; }
+h2 { font-size: 1.4em; padding-bottom: 0.3em; border-bottom: 1px solid var(--text); }
+h3 { font-size: 1.15em; }
+
+a { color: var(--text); text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 2px; }
+img { max-width: 100%; height: auto; }
+hr { border: 0; border-top: 1px solid var(--text); margin: 2.5em 0; }
+
+code {
+  font: 0.85em/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--text);
+  border-radius: 4px;
+}
+pre {
+  padding: 14px 16px;
+  border: 1px solid var(--text);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+pre code { padding: 0; border: 0; }
+
+blockquote {
+  margin: 1.2em 0;
+  padding: 0 1.1em;
+  border-left: 3px solid var(--text);
+}
+
+table { display: block; overflow-x: auto; border-collapse: collapse; margin: 1.2em 0; }
+th, td { border: 1px solid var(--text); padding: 6px 12px; }
+th { font-family: system-ui, sans-serif; font-size: 0.9em; }
+
+input[type="checkbox"] { accent-color: var(--text); }
+li.task { list-style: none; margin-left: -1.4em; }
+
+ul.notes { list-style: none; padding: 0; }
+ul.notes li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--text);
+}
+ul.notes time { font: 14px system-ui, sans-serif; white-space: nowrap; }
