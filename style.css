@@ -28,7 +28,18 @@ header {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+header { display: flex; align-items: center; gap: 12px; }
 header a { text-decoration: none; }
+header .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+header .sep { color: var(--text); }
+header .current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+header .back {
+  padding: 4px 8px;
+  border: 1px solid var(--text);
+  border-radius: 0;
+  line-height: 1;
+}
+header .back:hover { text-decoration: none; background: var(--text); color: var(--bg, #fff); }
 header a:hover { text-decoration: underline; }
 
 h1, h2, h3, h4, h5, h6 {
@@ -81,3 +92,36 @@ ul.notes li {
   border-bottom: 1px solid var(--text);
 }
 ul.notes time { font: 14px system-ui, sans-serif; white-space: nowrap; }
+
+/* ---------- Motion ---------- */
+
+/* Cross-page fade (browsers with cross-document View Transitions);
+   the header stays put while the content changes. */
+@view-transition { navigation: auto; }
+header { view-transition-name: site-header; }
+::view-transition-old(root) { animation: 160ms ease-out both fade-out; }
+::view-transition-new(root) { animation: 260ms cubic-bezier(.2,.7,.2,1) both fade-in-up; }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes fade-in-up { from { opacity: 0; transform: translateY(6px); } }
+
+html { scroll-behavior: smooth; }
+
+a {
+  text-decoration-color: color-mix(in srgb, var(--text) 35%, transparent);
+  transition: text-decoration-color 180ms ease, text-decoration-thickness 180ms ease;
+}
+a:hover { text-decoration-color: var(--text); }
+header a { text-decoration: underline; text-decoration-color: transparent; }
+header a:hover { text-decoration-color: var(--text); }
+header .back { text-decoration: none; transition: background-color 160ms ease, color 160ms ease; }
+
+ul.notes li a { transition: padding-left 220ms cubic-bezier(.2,.7,.2,1); }
+ul.notes li:hover a { padding-left: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, ::view-transition-old(root), ::view-transition-new(root) {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -49,6 +49,39 @@ struct Note {
     modified: u64,
 }
 
+/// A top-level note named `folder.name.md` belongs to the virtual folder `folder`
+/// (one level only: `a.b.c.md` is note `b.c` in folder `a`).
+fn split_folder(stem: &str) -> Option<(&str, &str)> {
+    if stem.contains('/') {
+        return None;
+    }
+    stem.split_once('.').filter(|(f, n)| !f.is_empty() && !n.is_empty())
+}
+
+/// Output path (without `.html`) of a note stem.
+fn output_stem(stem: &str) -> String {
+    match split_folder(stem) {
+        Some((folder, name)) => format!("{folder}/{name}"),
+        None => stem.to_string(),
+    }
+}
+
+fn note_list(notes: &[Note], base: &str) -> String {
+    let items: Vec<String> = notes
+        .iter()
+        .map(|n| {
+            let href = n.href.strip_prefix(base).unwrap_or(&n.href);
+            format!(
+                "<li><a href=\"{}\">{}</a> <time>{}</time></li>",
+                url_encode(href),
+                escape(&n.title),
+                format_date(n.modified)
+            )
+        })
+        .collect();
+    format!("<ul class=\"notes\">\n{}\n</ul>", items.join("\n"))
+}
+
 /// Recursively lists the files in `dir`, as relative paths using `/`.
 fn walk(dir: &Path, base: &str, out: &mut Vec<String>) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
@@ -64,7 +97,29 @@ fn walk(dir: &Path, base: &str, out: &mut Vec<String>) -> io::Result<()> {
     Ok(())
 }
 
-fn page(title: &str, body: &str, root: &str) -> String {
+/// Builds a page. `trail` lists the intermediate levels between the home page and
+/// this page as (label, href relative to the site root); the last one is the parent.
+/// The home page passes `None`.
+fn page(title: &str, body: &str, root: &str, trail: Option<&[(&str, &str)]>) -> String {
+    let mut crumbs = format!("<a href=\"{root}index.html\">{}</a>", escape(&hostname()));
+    let mut back = String::new();
+    if let Some(trail) = trail {
+        for (label, href) in trail {
+            crumbs.push_str(&format!(
+                "<span class=\"sep\">/</span><a href=\"{root}{}\">{}</a>",
+                url_encode(href),
+                escape(label)
+            ));
+        }
+        crumbs.push_str(&format!(
+            "<span class=\"sep\">/</span><span class=\"current\">{}</span>",
+            escape(title)
+        ));
+        let parent = trail.last().map_or("index.html".to_string(), |(_, h)| url_encode(h));
+        back = format!(
+            "<a class=\"back\" href=\"{root}{parent}\" title=\"Back (Esc)\" aria-label=\"Back\">←</a>"
+        );
+    }
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -75,15 +130,35 @@ fn page(title: &str, body: &str, root: &str) -> String {
 <link rel="stylesheet" href="{root}style.css">
 </head>
 <body>
-<header><a href="{root}index.html">{site}</a></header>
+<header>{back}<nav class="crumbs">{crumbs}</nav></header>
 <main>
 {body}
 </main>
+<script>
+// Smart back: return in history when we came from this site (keeps the scroll
+// position), otherwise go up to the parent page. Esc does the same.
+(function () {{
+  var back = document.querySelector("header .back");
+  if (!back) return;
+  function goBack(e) {{
+    var ref = document.referrer;
+    if (ref && new URL(ref).origin === location.origin && history.length > 1) {{
+      if (e) e.preventDefault();
+      history.back();
+    }} else if (!e) {{
+      location.href = back.href;
+    }}
+  }}
+  back.addEventListener("click", goBack);
+  document.addEventListener("keydown", function (e) {{
+    if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey) goBack(null);
+  }});
+}})();
+</script>
 </body>
 </html>
 "#,
         title = escape(title),
-        site = escape(&hostname()),
     )
 }
 
@@ -102,7 +177,9 @@ fn hostname() -> String {
 }
 
 /// Links between notes (`[see](other.md)`) point to the generated page.
-fn rewrite_md_links(html: &str) -> String {
+/// `root` is the path from the current page back to the site root; it is used
+/// for flat links (no `/`) so `folder.name.md` resolves from anywhere.
+fn rewrite_md_links(html: &str, root: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let mut rest = html;
     while let Some(p) = rest.find("href=\"") {
@@ -114,7 +191,12 @@ fn rewrite_md_links(html: &str) -> String {
         let (path, fragment) = url.split_at(url.find('#').unwrap_or(url.len()));
         match path.strip_suffix(".md") {
             Some(stem) if !url.contains(':') => {
-                out.push_str(stem);
+                if !stem.contains('/') {
+                    out.push_str(root);
+                    out.push_str(&output_stem(stem));
+                } else {
+                    out.push_str(stem);
+                }
                 out.push_str(".html");
                 out.push_str(fragment);
             }
@@ -198,11 +280,24 @@ fn build() -> io::Result<usize> {
             .find_map(|l| l.strip_prefix("# "))
             .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| stem.rsplit('/').next().unwrap_or(stem).to_string());
-        let root = "../".repeat(rel.matches('/').count());
-        let body = format!("<article>\n{}\n</article>", rewrite_md_links(&render(&md)));
-        let href = format!("{stem}.html");
-        write_file(&dist.join(&href), page(&title, &body, &root).as_bytes())?;
+            .unwrap_or_else(|| {
+                let out = output_stem(stem);
+                out.rsplit('/').next().unwrap_or(&out).to_string()
+            });
+        let href = format!("{}.html", output_stem(stem));
+        let root = "../".repeat(href.matches('/').count());
+        // Flat links in a virtual-folder note resolve from the notes root.
+        let link_root = if split_folder(stem).is_some() { root.as_str() } else { "" };
+        let body = format!(
+            "<article>\n{}\n</article>",
+            rewrite_md_links(&render(&md), link_root)
+        );
+        let trail: Vec<(&str, String)> = match split_folder(stem) {
+            Some((folder, _)) => vec![(folder, format!("{folder}/index.html"))],
+            None => Vec::new(),
+        };
+        let trail: Vec<(&str, &str)> = trail.iter().map(|(l, h)| (*l, h.as_str())).collect();
+        write_file(&dist.join(&href), page(&title, &body, &root, Some(&trail)).as_bytes())?;
         let modified = fs::metadata(&src)?
             .modified()?
             .duration_since(UNIX_EPOCH)
@@ -211,32 +306,65 @@ fn build() -> io::Result<usize> {
     }
 
     notes.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.title.cmp(&b.title)));
-    let list = if notes.is_empty() {
+    let count = notes.len();
+
+    // Group virtual-folder notes; each folder gets its own index page.
+    let mut folders: Vec<(String, Vec<Note>)> = Vec::new();
+    let mut top = Vec::new();
+    for n in notes {
+        let stem = n.href.strip_suffix(".html").unwrap_or(&n.href);
+        let folder = stem.split_once('/').map(|(f, _)| f.to_string());
+        match folder {
+            Some(f) if n.href.matches('/').count() == 1 && is_virtual(&f, &notes_dir) => {
+                match folders.iter_mut().find(|(name, _)| *name == f) {
+                    Some((_, v)) => v.push(n),
+                    None => folders.push((f, vec![n])),
+                }
+            }
+            _ => top.push(n),
+        }
+    }
+    for (name, list) in &folders {
+        let body = format!(
+            "<h1>{}</h1>\n{}",
+            escape(name),
+            note_list(list, &format!("{name}/"))
+        );
+        write_file(&dist.join(name).join("index.html"), page(name, &body, "../", Some(&[])).as_bytes())?;
+        top.push(Note {
+            title: format!("{name}/"),
+            href: format!("{name}/index.html"),
+            modified: list.iter().map(|n| n.modified).max().unwrap_or(0),
+        });
+    }
+    top.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.title.cmp(&b.title)));
+
+    let list = if top.is_empty() {
         format!(
             "<p>No notes yet. Add a <code>.md</code> file to <code>{}</code>.</p>",
             escape(&notes_dir.display().to_string())
         )
     } else {
-        let items: Vec<String> = notes
-            .iter()
-            .map(|n| {
-                format!(
-                    "<li><a href=\"{}\">{}</a> <time>{}</time></li>",
-                    url_encode(&n.href),
-                    escape(&n.title),
-                    format_date(n.modified)
-                )
-            })
-            .collect();
-        format!("<ul class=\"notes\">\n{}\n</ul>", items.join("\n"))
+        note_list(&top, "")
     };
     let body = format!(
         "<h1>{}</h1>\n<p>{}</p>\n{list}",
         escape(SITE_TITLE),
         escape(INDEX_INTRO)
     );
-    fs::write(dist.join("index.html"), page(SITE_TITLE, &body, ""))?;
-    Ok(notes.len())
+    fs::write(dist.join("index.html"), page(SITE_TITLE, &body, "", None))?;
+    Ok(count)
+}
+
+/// True if `folder` comes from `folder.*.md` files at the top of the notes
+/// directory (rather than a real sub-directory).
+fn is_virtual(folder: &str, notes_dir: &Path) -> bool {
+    fs::read_dir(notes_dir).into_iter().flatten().flatten().any(|e| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        name.strip_suffix(".md")
+            .and_then(split_folder)
+            .is_some_and(|(f, _)| f == folder)
+    })
 }
 
 // ---------- Local server ----------
