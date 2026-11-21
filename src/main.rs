@@ -23,6 +23,8 @@ const DEFAULT_NOTES: &str = "notes";
 const NOTES_ENV: &str = "IMDSRC";
 const DIST: &str = "dist";
 const STYLE: &str = "style.css";
+/// KaTeX (math rendering), copied to `dist/katex/`.
+const KATEX: &str = "vendor/katex";
 
 fn main() {
     if env::args().any(|a| a == "--serve") {
@@ -120,6 +122,31 @@ fn page(title: &str, body: &str, root: &str, trail: Option<&[(&str, &str)]>) -> 
             "<a class=\"back\" href=\"{root}{parent}\" title=\"Back (Esc)\" aria-label=\"Back\">←</a>"
         );
     }
+    // KaTeX is only loaded on pages that contain math.
+    let (math_head, math_script) = if body.contains("class=\"math ") {
+        (
+            format!(
+                "<link rel=\"stylesheet\" href=\"{root}katex/katex.min.css\">\n\
+                 <script defer src=\"{root}katex/katex.min.js\"></script>\n"
+            ),
+            r#"<script>
+// Draws the math spans produced by the Markdown interpreter. A broken formula
+// is shown in red instead of breaking the page.
+document.addEventListener("DOMContentLoaded", function () {
+  if (!window.katex) return;
+  document.querySelectorAll(".math").forEach(function (el) {
+    katex.render(el.textContent, el, {
+      displayMode: el.classList.contains("math-display"),
+      throwOnError: false
+    });
+  });
+});
+</script>
+"#,
+        )
+    } else {
+        (String::new(), "")
+    };
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -128,7 +155,7 @@ fn page(title: &str, body: &str, root: &str, trail: Option<&[(&str, &str)]>) -> 
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <link rel="stylesheet" href="{root}style.css">
-</head>
+{math_head}</head>
 <body>
 <header>{back}<nav class="crumbs">{crumbs}</nav></header>
 <main>
@@ -155,7 +182,7 @@ fn page(title: &str, body: &str, root: &str, trail: Option<&[(&str, &str)]>) -> 
   }});
 }})();
 </script>
-</body>
+{math_script}</body>
 </html>
 "#,
         title = escape(title),
@@ -260,6 +287,11 @@ fn build() -> io::Result<usize> {
     }
     fs::create_dir_all(dist)?;
     fs::copy(STYLE, dist.join("style.css"))?;
+    let mut katex = Vec::new();
+    walk(Path::new(KATEX), "", &mut katex)?;
+    for rel in katex {
+        write_file(&dist.join("katex").join(&rel), &fs::read(Path::new(KATEX).join(&rel))?)?;
+    }
 
     let mut files = Vec::new();
     if notes_dir.is_dir() {
@@ -434,6 +466,7 @@ fn respond(path: &str, lock: &Mutex<()>) -> (&'static str, &'static str, Vec<u8>
         "svg" => "image/svg+xml",
         "webp" => "image/webp",
         "pdf" => "application/pdf",
+        "woff2" => "font/woff2",
         _ => "application/octet-stream",
     };
     match fs::read(&file) {

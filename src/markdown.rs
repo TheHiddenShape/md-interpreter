@@ -2,7 +2,8 @@
 //!
 //! Supported: headings, paragraphs, bold/italic/strikethrough, inline code,
 //! code blocks (``` or ~~~), links, images, lists (nested, bulleted,
-//! numbered, checkboxes), blockquotes, tables, horizontal rules.
+//! numbered, checkboxes), blockquotes, tables, horizontal rules, math
+//! (`$inline$`, `$$display$$`, ```math blocks; drawn in the browser by KaTeX).
 //! Raw HTML is escaped (shown as-is, never executed).
 
 use std::collections::HashMap;
@@ -147,7 +148,48 @@ fn item(l: &str) -> Option<Item<'_>> {
 }
 
 fn starts_block(l: &str) -> bool {
-    fence(l).is_some() || heading(l).is_some() || is_hr(l) || quote(l).is_some() || item(l).is_some()
+    fence(l).is_some()
+        || heading(l).is_some()
+        || is_hr(l)
+        || quote(l).is_some()
+        || item(l).is_some()
+        || opens_math(l)
+}
+
+fn opens_math(l: &str) -> bool {
+    indent_of(l) <= 3 && l.trim_start().starts_with("$$")
+}
+
+/// Display math starting at line `i`: `$$ tex $$` on one line, or `$$` ... `$$`
+/// over several lines (no blank line inside). Returns (TeX, index of the next line).
+fn display_math(lines: &[String], i: usize) -> Option<(String, usize)> {
+    if !opens_math(&lines[i]) {
+        return None;
+    }
+    let rest = &lines[i].trim()[2..];
+    if let Some(tex) = rest.strip_suffix("$$") {
+        return Some((tex.trim().to_string(), i + 1)).filter(|(t, _)| !t.is_empty());
+    }
+    if rest.contains("$$") {
+        return None; // `$$a$$ and text`: inline math in a paragraph
+    }
+    let mut tex = vec![rest];
+    for (j, l) in lines.iter().enumerate().skip(i + 1) {
+        if is_blank(l) {
+            return None;
+        }
+        if let Some(last) = l.trim_end().strip_suffix("$$") {
+            tex.push(last);
+            return Some((tex.join("\n").trim().to_string(), j + 1));
+        }
+        tex.push(l);
+    }
+    None
+}
+
+fn math_html(tag: &str, display: bool, tex: &str) -> String {
+    let mode = if display { "display" } else { "inline" };
+    format!("<{tag} class=\"math math-{mode}\">{}</{tag}>", escape(tex.trim()))
 }
 
 /// Splits a table row into cells (`\|` is not a separator).
@@ -244,12 +286,23 @@ fn blocks(lines: &[String], ids: &mut Ids) -> String {
                 i += 1;
             }
             i += 1; // closing line
+            if lang == "math" {
+                out.push(math_html("div", true, &code));
+                continue;
+            }
             let class = if lang.is_empty() {
                 String::new()
             } else {
                 format!(" class=\"language-{}\"", escape(lang))
             };
             out.push(format!("<pre><code{class}>{}</code></pre>", escape(&code)));
+            continue;
+        }
+
+        // Display math
+        if let Some((tex, next)) = display_math(lines, i) {
+            out.push(math_html("div", true, &tex));
+            i = next;
             continue;
         }
 
@@ -451,7 +504,8 @@ fn find_code_close(c: &[char], from: usize, n: usize) -> Option<usize> {
     None
 }
 
-/// Skips past an escape or an inline code span; `None` if `c[j]` is neither.
+/// Skips past an escape, an inline code span or a math span; `None` if `c[j]`
+/// starts none of them.
 fn skip_opaque(c: &[char], j: usize) -> Option<usize> {
     match c[j] {
         '\\' => Some(j + 2),
@@ -459,8 +513,52 @@ fn skip_opaque(c: &[char], j: usize) -> Option<usize> {
             let n = run_len(c, j);
             Some(find_code_close(c, j + n, n).map_or(j + n, |e| e + n))
         }
+        '$' => math_span(c, j).map(|m| m.end),
         _ => None,
     }
+}
+
+struct Math {
+    display: bool,
+    tex: (usize, usize),
+    end: usize,
+}
+
+/// Math span starting at the `$` at position `i`: `$$tex$$` (display) or `$tex$`.
+/// For `$tex$`, the opening `$` must be followed by a non-space and the closing
+/// one preceded by a non-space and not followed by a digit, so "$5 and $10" is
+/// plain text. `\$` never closes a span.
+fn math_span(c: &[char], i: usize) -> Option<Math> {
+    let display = match run_len(c, i) {
+        1 => false,
+        2 => true,
+        _ => return None,
+    };
+    let start = i + if display { 2 } else { 1 };
+    if !display && !c.get(start).is_some_and(|x| !x.is_whitespace()) {
+        return None;
+    }
+    let mut j = start;
+    while j < c.len() {
+        match c[j] {
+            '\\' => j += 2,
+            '$' if display => {
+                if c.get(j + 1) == Some(&'$') && j > start {
+                    return Some(Math { display, tex: (start, j), end: j + 2 });
+                }
+                return None;
+            }
+            '$' => {
+                let next = c.get(j + 1);
+                if !c[j - 1].is_whitespace() && !next.is_some_and(|x| x.is_ascii_digit() || *x == '$') {
+                    return Some(Math { display, tex: (start, j), end: j + 1 });
+                }
+                j += 1;
+            }
+            _ => j += 1,
+        }
+    }
+    None
 }
 
 struct Link {
@@ -599,6 +697,20 @@ fn inline_chars(c: &[char]) -> String {
                     i += n;
                 }
             }
+
+            // Math: $tex$ or $$tex$$, nothing inside is interpreted
+            '$' => match math_span(c, i) {
+                Some(m) => {
+                    let tex: String = c[m.tex.0..m.tex.1].iter().collect();
+                    out.push_str(&math_html("span", m.display, &tex));
+                    i = m.end;
+                }
+                None => {
+                    let n = run_len(c, i);
+                    out.extend(std::iter::repeat('$').take(n));
+                    i += n;
+                }
+            },
 
             // Image ![alt](url "title")
             '!' if c.get(i + 1) == Some(&'[') => match parse_link(c, i + 1) {
@@ -813,5 +925,36 @@ mod tests {
              <tr><td style=\"text-align:center\">alone</td><td style=\"text-align:right\"></td></tr>\n</tbody>\n</table>"
         );
         assert_eq!(render("a | b\nc"), "<p>a | b\nc</p>");
+    }
+
+    #[test]
+    fn math() {
+        // Inline: Markdown rules do not apply inside, HTML is escaped.
+        assert_eq!(
+            render("$x^*y^*$ and $a_1 < b_2$ and $\\$5$"),
+            "<p><span class=\"math math-inline\">x^*y^*</span> and \
+             <span class=\"math math-inline\">a_1 &lt; b_2</span> and \
+             <span class=\"math math-inline\">\\$5</span></p>"
+        );
+        // Prices, lone dollars and escaped dollars stay plain text.
+        assert_eq!(render("costs $5 and $10."), "<p>costs $5 and $10.</p>");
+        assert_eq!(render("$ x$ and \\$y$ and $$$"), "<p>$ x$ and $y$ and $$$</p>");
+        // Emphasis around math, and a `*` inside math does not close it.
+        assert_eq!(
+            render("*see $a*b$*"),
+            "<p><em>see <span class=\"math math-inline\">a*b</span></em></p>"
+        );
+        // Inline display, single-line and multi-line display blocks.
+        assert_eq!(
+            render("a $$x$$ b\n$$ \\frac{1}{2} $$\ntext\n$$\n\\int_0^1 x \\, dx\n$$"),
+            "<p>a <span class=\"math math-display\">x</span> b</p>\n\
+             <div class=\"math math-display\">\\frac{1}{2}</div>\n<p>text</p>\n\
+             <div class=\"math math-display\">\\int_0^1 x \\, dx</div>"
+        );
+        // ```math fence; `$` in code is untouched; unclosed `$$` is plain text.
+        assert_eq!(
+            render("```math\na_1 * b\n```\n`$x$`\n\n$$\nnot closed"),
+            "<div class=\"math math-display\">a_1 * b</div>\n<p><code>$x$</code></p>\n<p>$$\nnot closed</p>"
+        );
     }
 }

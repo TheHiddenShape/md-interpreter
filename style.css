@@ -77,6 +77,9 @@ blockquote {
 }
 
 table { display: block; overflow-x: auto; border-collapse: collapse; margin: 1.2em 0; }
+
+/* Math (KaTeX): long formulas scroll sideways instead of widening the page. */
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; }
 th, td { border: 1px solid var(--text); padding: 6px 12px; }
 th { font-family: system-ui, sans-serif; font-size: 0.9em; }
 

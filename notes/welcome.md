@@ -42,6 +42,18 @@ function greet(name) {
 | `**bold**`  | **bold**    |             1 |
 | `*italic*`  | *italic*    |            22 |
 
+## Math
+
+Inline math between single dollars: $E = mc^2$. Prices like $5 and $10 stay plain text.
+
+$$
+\int_0^1 x^2 \, dx = \frac{1}{3}
+$$
+
+```math
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+```
+
 ---
 
 Raw HTML is escaped: <script>alert("no")</script> is shown as-is.
