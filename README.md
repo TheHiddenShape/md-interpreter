@@ -1,3 +1,3 @@
 # md-interpreter
 
-Lancer : `cargo run -- --serve` → http://localhost:8000
+Run: `cargo run -- --serve` → http://localhost:8000
